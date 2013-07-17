@@ -15,7 +15,8 @@ namespace Inedo.BuildMasterExtensions.SqlServer
 {
     [ProviderProperties(
         "SQL Server",
-        "Provides functionality for managing change scripts in Microsoft SQL Server databases.")]
+        "Provides functionality for managing change scripts in Microsoft SQL Server databases.",
+        RequiresTransparentProxy = true)]
     [CustomEditor(typeof(SqlServerDatabaseProviderEditor))]
     public sealed class SqlServerDatabaseProvider : DatabaseProviderBase, IRestoreProvider, IChangeScriptProvider
     {
