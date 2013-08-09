@@ -92,6 +92,9 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
                     int scriptSequence = 0;
                     foreach(var sqlCommand in SqlSplitter.SplitSqlScript(scriptText))
                     {
+                        if (string.IsNullOrWhiteSpace(sqlCommand))
+                            continue;
+
                         scriptSequence++;
                         try 
                         {
