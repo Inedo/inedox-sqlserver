@@ -21,6 +21,7 @@ namespace Inedo.BuildMasterExtensions.SqlServer
     public sealed class SqlServerDatabaseProvider : DatabaseProviderBase, IRestoreProvider, IChangeScriptProvider
     {
         private SqlConnection sharedConnection;
+        private SqlCommand sharedCommand;
 
         public SqlServerDatabaseProvider()
         {
@@ -87,21 +88,22 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
 
             try
             {
-                using (var cmd = this.CreateCommand())
+                var cmd = this.CreateCommand();
+                try
                 {
                     int scriptSequence = 0;
-                    foreach(var sqlCommand in SqlSplitter.SplitSqlScript(scriptText))
+                    foreach (var sqlCommand in SqlSplitter.SplitSqlScript(scriptText))
                     {
                         if (string.IsNullOrWhiteSpace(sqlCommand))
                             continue;
 
                         scriptSequence++;
-                        try 
+                        try
                         {
                             cmd.CommandText = sqlCommand;
                             cmd.ExecuteNonQuery();
                         }
-                        catch (Exception ex) 
+                        catch (Exception ex)
                         {
                             this.InsertSchemaChange(numericReleaseNumber, scriptId, scriptName, scriptSequence, false);
                             return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution encountered a fatal error. Error details: {1}", scriptName, ex.Message) + Util.ConcatNE(" Additional SQL Output: ", sqlMessageBuffer.ToString()));
@@ -112,6 +114,14 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
                         if (errorOccured)
                             return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution failed.", scriptName) + Util.ConcatNE(" SQL Error: ", sqlMessageBuffer.ToString()));
                     }
+                }
+                finally
+                {
+                    if (this.sharedCommand == null)
+                        cmd.Dispose();
+
+                    if (this.sharedConnection == null)
+                        cmd.Connection.Dispose();
                 }
 
                 return new ExecutionResult(ExecutionResult.Results.Success, string.Format("The script \"{0}\" executed successfully.", scriptName) + Util.ConcatNE(" SQL Output: ", sqlMessageBuffer.ToString()));
@@ -126,7 +136,8 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
         {
             if (!Directory.Exists(Path.GetDirectoryName(destinationPath)))
                 Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-            ExecuteNonQuery(string.Format(
+
+            this.ExecuteNonQuery(string.Format(
                 "BACKUP DATABASE [{0}] TO DISK = N'{1}' WITH FORMAT",
                 databaseName.Replace("]", "]]"),
                 destinationPath.Replace("'", "''")));
@@ -191,42 +202,49 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
             if (queries.Length == 0)
                 return;
 
-            using (var cmd = this.CreateCommand())
+            var cmd = this.CreateCommand();
+            try
             {
-                try
+                foreach (var query in queries)
                 {
-                    foreach (var query in queries)
+                    foreach (string splitQuery in SqlSplitter.SplitSqlScript(query))
                     {
-                        foreach (string splitQuery in SqlSplitter.SplitSqlScript(query))
+                        try
                         {
-                            try
-                            {
-                                cmd.CommandText = splitQuery;
-                                cmd.ExecuteNonQuery();
-                            }
-                            catch
-                            {
-                                // TODO: how to read action properties in this method?
-                                // Error reporting?
-                                //if (!ResumeNextOnError) throw;
-                            }
+                            cmd.CommandText = splitQuery;
+                            cmd.ExecuteNonQuery();
+                        }
+                        catch
+                        {
                         }
                     }
                 }
-                finally
-                {
-                    if (this.sharedConnection == null)
-                        cmd.Connection.Close();
-                }
+            }
+            finally
+            {
+                if (this.sharedCommand == null)
+                    cmd.Dispose();
+
+                if (this.sharedConnection == null)
+                    cmd.Connection.Close();
             }
         }
         public override void OpenConnection()
         {
             if (this.sharedConnection != null)
+            {
                 this.sharedConnection = this.CreateConnection();
+                this.sharedCommand = this.CreateCommand();
+            }
         }
         public override void CloseConnection()
         {
+            if (this.sharedCommand != null)
+            {
+                this.sharedCommand.Dispose();
+                this.sharedCommand = null;
+            }
+
             if (this.sharedConnection != null)
             {
                 this.sharedConnection.Dispose();
@@ -235,7 +253,7 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
         }
         public override void ValidateConnection()
         {
-            var dr = ExecuteDataTable("SELECT CAST(IS_MEMBER('db_owner') AS BIT) isDbOwner").Rows[0];
+            var dr = this.ExecuteDataTable("SELECT CAST(IS_MEMBER('db_owner') AS BIT) isDbOwner").Rows[0];
             bool db_owner = !Convert.IsDBNull(dr[0]) && (bool)dr[0];
             if (!db_owner)
                 throw new NotAvailableException("The ConnectionString credentials must have 'db_owner' privileges.");
@@ -282,9 +300,17 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
         }
         private SqlCommand CreateCommand()
         {
+            if (this.sharedCommand != null)
+            {
+                this.sharedCommand.Parameters.Clear();
+                return this.sharedCommand;
+            }
+
             var cmd = new SqlCommand
             {
-                CommandTimeout = 0
+                CommandTimeout = 0,
+                CommandType = CommandType.Text,
+                CommandText = string.Empty
             };
 
             if (this.sharedConnection != null)
@@ -306,46 +332,48 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
             if (string.IsNullOrEmpty(cmdText))
                 return;
 
-            using (var cmd = this.CreateCommand())
+            var cmd = this.CreateCommand();
+            try
             {
-                try
+                foreach (var commandText in SqlSplitter.SplitSqlScript(cmdText))
                 {
-                    foreach (var commandText in SqlSplitter.SplitSqlScript(cmdText))
+                    try
                     {
-                        try
-                        {
-                            cmd.CommandText = commandText;
-                            cmd.ExecuteNonQuery();
-                        }
-                        catch (SqlException)
-                        {
-                            // TODO: no action context; not sure whether to continue on next
-                            throw;
-                        }
+                        cmd.CommandText = commandText;
+                        cmd.ExecuteNonQuery();
+                    }
+                    catch (SqlException)
+                    {
+                        // TODO: no action context; not sure whether to continue on next
+                        throw;
                     }
                 }
-                finally
-                {
-                    if(this.sharedConnection == null)
-                        cmd.Connection.Close();
-                }
+            }
+            finally
+            {
+                if (this.sharedCommand == null)
+                    cmd.Dispose();
+
+                if (this.sharedConnection == null)
+                    cmd.Connection.Close();
             }
         }
         private DataTable ExecuteDataTable(string cmdText)
         {
             var dt = new DataTable();
-            using (var cmd = this.CreateCommand())
+            var cmd = this.CreateCommand();
+            cmd.CommandText = cmdText;
+            try
             {
-                cmd.CommandText = cmdText;
-                try
-                {
-                    dt.Load(cmd.ExecuteReader());
-                }
-                finally
-                {
-                    if (this.sharedConnection == null)
-                        cmd.Connection.Close();
-                }
+                dt.Load(cmd.ExecuteReader());
+            }
+            finally
+            {
+                if (this.sharedCommand == null)
+                    cmd.Dispose();
+
+                if (this.sharedConnection == null)
+                    cmd.Connection.Close();
             }
 
             return dt;
