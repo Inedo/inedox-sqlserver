@@ -199,34 +199,10 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
         {
             if (queries == null)
                 throw new ArgumentNullException("queries");
-            if (queries.Length == 0)
-                return;
 
-            var cmd = this.CreateCommand();
-            try
+            foreach (var query in queries)
             {
-                foreach (var query in queries)
-                {
-                    foreach (string splitQuery in SqlSplitter.SplitSqlScript(query))
-                    {
-                        try
-                        {
-                            cmd.CommandText = splitQuery;
-                            cmd.ExecuteNonQuery();
-                        }
-                        catch
-                        {
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                if (this.sharedCommand == null)
-                    cmd.Dispose();
-
-                if (this.sharedConnection == null)
-                    cmd.Connection.Close();
+                this.ExecuteNonQuery(query);
             }
         }
         public override void OpenConnection()
@@ -337,16 +313,10 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
             {
                 foreach (var commandText in SqlSplitter.SplitSqlScript(cmdText))
                 {
-                    try
-                    {
-                        cmd.CommandText = commandText;
-                        cmd.ExecuteNonQuery();
-                    }
-                    catch (SqlException)
-                    {
-                        // TODO: no action context; not sure whether to continue on next
-                        throw;
-                    }
+                    if (string.IsNullOrWhiteSpace(commandText)) continue;
+
+                    cmd.CommandText = commandText;
+                    cmd.ExecuteNonQuery();
                 }
             }
             finally
