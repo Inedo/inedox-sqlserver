@@ -308,6 +308,18 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
             if (string.IsNullOrEmpty(cmdText))
                 return;
 
+            var sqlErrorBuffr = new StringBuilder();
+            bool errorOccured = false;
+            EventHandler<LogReceivedEventArgs> logMessage = (s, e) =>
+            {
+                if (e.LogLevel != MessageLevel.Error) return;
+                
+                errorOccured = true;
+                sqlErrorBuffr.AppendLine(e.Message);
+            };
+
+            this.LogReceived += logMessage;
+
             var cmd = this.CreateCommand();
             try
             {
@@ -317,10 +329,16 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
 
                     cmd.CommandText = commandText;
                     cmd.ExecuteNonQuery();
+
+                    if (errorOccured)
+                        throw new InvalidOperationException("An error occurred while executing a query: " + sqlErrorBuffr.ToString());
+
                 }
             }
             finally
             {
+                this.LogReceived -= logMessage;
+
                 if (this.sharedCommand == null)
                     cmd.Dispose();
 
