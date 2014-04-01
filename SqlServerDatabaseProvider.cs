@@ -109,7 +109,7 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
                             return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution encountered a fatal error. Error details: {1}", scriptName, ex.Message) + Util.ConcatNE(" Additional SQL Output: ", sqlMessageBuffer.ToString()));
                         }
 
-                        this.InsertSchemaChange(numericReleaseNumber, scriptId, scriptName, scriptSequence, true);
+                        this.InsertSchemaChange(numericReleaseNumber, scriptId, scriptName, scriptSequence, !errorOccured);
 
                         if (errorOccured)
                             return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution failed.", scriptName) + Util.ConcatNE(" SQL Error: ", sqlMessageBuffer.ToString()));
