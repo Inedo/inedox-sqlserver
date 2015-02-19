@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Inedo.BuildMaster;
 using Inedo.BuildMaster.Extensibility.Actions;
@@ -26,6 +28,11 @@ namespace Inedo.BuildMasterExtensions.SqlServer
 
         public SqlServerDatabaseProvider()
         {
+        }
+
+        public static IEnumerable<Assembly> EnumerateChangeScripterAssemblies()
+        {
+            return Enumerable.Empty<Assembly>();
         }
 
         public void InitializeDatabase()
