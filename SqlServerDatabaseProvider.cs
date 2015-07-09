@@ -237,10 +237,22 @@ ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
         }
         public override void ValidateConnection()
         {
-            var dr = this.ExecuteDataTable("SELECT CAST(IS_MEMBER('db_owner') AS BIT) isDbOwner").Rows[0];
-            bool db_owner = !Convert.IsDBNull(dr[0]) && (bool)dr[0];
-            if (!db_owner)
-                throw new NotAvailableException("The ConnectionString credentials must have 'db_owner' privileges.");
+            var requiredPermissions = new[] { "SELECT", "INSERT", "CREATE TABLE" };
+
+            var userPermissions = this.ExecuteDataTable("SELECT [permission_name] FROM fn_my_permissions(NULL, 'database')")
+                .Rows
+                .Cast<DataRow>()
+                .Select(r => r[0].ToString())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);            
+
+            if (!userPermissions.IsSupersetOf(requiredPermissions))
+                throw new NotAvailableException(
+                    string.Format(
+                        "At a minimum, the user credentials in the connection string must be granted the following privileges to the database: {0} (missing {1})",
+                        string.Join(", ", requiredPermissions),
+                        string.Join(", ", requiredPermissions.Where(p => !userPermissions.Contains(p)))
+                    )
+                );
         }
 
         protected override void Dispose(bool disposing)
