@@ -28,6 +28,11 @@ namespace Inedo.BuildMasterExtensions.SqlServer
 
             this.Controls.Add(
                 new SlimFormField("Connection string:", this.txtConnectionString)
+                {
+                    HelpText = HelpText.FromHtml("<p>The connection string typically follows the format:</p>"
+                    + "<code>Server=myServerAddress;Database=myDataBase;Integrated Security=true;</code>"
+                    + "<p>For more examples, visit: <a target=\"_blank\" href=\"https://www.connectionstrings.com/sql-server/\">ConnectionStrings.com</a></p>")
+                }
             );
         }
     }
