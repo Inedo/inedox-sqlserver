@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Data.SqlClient;
 using System.IO;
@@ -15,20 +16,14 @@ using Inedo.Diagnostics;
 
 namespace Inedo.BuildMasterExtensions.SqlServer
 {
-    [ProviderProperties(
-        "SQL Server",
-        "Provides functionality for managing change scripts in Microsoft SQL Server databases.",
-        RequiresTransparentProxy = true)]
+    [DisplayName("SQL Server")]
+    [Description("Provides functionality for managing change scripts in Microsoft SQL Server databases.")]
     [Tag("sql-server"), Tag("databases")]
     [CustomEditor(typeof(SqlServerDatabaseProviderEditor))]
     public sealed class SqlServerDatabaseProvider : DatabaseProviderBase, IRestoreProvider, IChangeScriptProvider
     {
         private SqlConnection sharedConnection;
         private SqlCommand sharedCommand;
-
-        public SqlServerDatabaseProvider()
-        {
-        }
 
         public static IEnumerable<Assembly> EnumerateChangeScripterAssemblies()
         {
