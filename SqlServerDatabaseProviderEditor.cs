@@ -1,23 +1,23 @@
-﻿using Inedo.BuildMaster.Extensibility.Providers;
+﻿using Inedo.BuildMaster.Extensibility.DatabaseConnections;
 using Inedo.BuildMaster.Web.Controls.Extensions;
 using Inedo.Web.Controls;
 
 namespace Inedo.BuildMasterExtensions.SqlServer
 {
-    internal sealed class SqlServerDatabaseProviderEditor : ProviderEditorBase
+    internal sealed class SqlServerDatabaseProviderEditor : DatabaseConnectionEditorBase
     {
         private ValidatingTextBox txtConnectionString;
 
-        public override void BindToForm(ProviderBase extension)
+        public override void BindToForm(DatabaseConnection extension)
         {
             var sqlProv = (SqlServerDatabaseProvider)extension;
             txtConnectionString.Text = sqlProv.ConnectionString;
         }
 
-        public override ProviderBase CreateFromForm()
+        public override DatabaseConnection CreateFromForm()
         {
             return new SqlServerDatabaseProvider
-            { 
+            {
                 ConnectionString = txtConnectionString.Text
             };
         }

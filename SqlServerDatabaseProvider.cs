@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.Data.SqlClient;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Inedo.BuildMaster;
-using Inedo.BuildMaster.Extensibility.Actions;
-using Inedo.BuildMaster.Extensibility.Providers;
-using Inedo.BuildMaster.Extensibility.Providers.Database;
+using Inedo.BuildMaster.Extensibility.DatabaseConnections;
 using Inedo.BuildMaster.Web;
+using Inedo.BuildMasterExtensions.SqlServer.Properties;
+using Inedo.Data;
 using Inedo.Diagnostics;
+using Inedo.IO;
 
 namespace Inedo.BuildMasterExtensions.SqlServer
 {
@@ -20,380 +20,291 @@ namespace Inedo.BuildMasterExtensions.SqlServer
     [Description("Provides functionality for managing change scripts in Microsoft SQL Server databases.")]
     [Tag("sql-server"), Tag("databases")]
     [CustomEditor(typeof(SqlServerDatabaseProviderEditor))]
-    public sealed class SqlServerDatabaseProvider : DatabaseProviderBase, IRestoreProvider, IChangeScriptProvider
+    public sealed class SqlServerDatabaseProvider : DatabaseConnection, IBackupRestore, IChangeScriptExecuter
     {
-        private SqlConnection sharedConnection;
-        private SqlCommand sharedCommand;
+        private SqlConnection connection;
+        private readonly object connectionLock = new object();
+        private bool disposed;
 
-        public static IEnumerable<Assembly> EnumerateChangeScripterAssemblies()
+        public int MaxChangeScriptVersion => 2;
+
+        public static IEnumerable<Assembly> EnumerateChangeScripterAssemblies() => Enumerable.Empty<Assembly>();
+
+        public override Task ExecuteQueryAsync(string query, CancellationToken cancellationToken) => this.ExecuteQueryAsync(query, cancellationToken, null);
+
+        public Task BackupDatabaseAsync(string databaseName, string destinationPath, CancellationToken cancellationToken)
         {
-            return Enumerable.Empty<Assembly>();
+            if (string.IsNullOrWhiteSpace(databaseName))
+                throw new ArgumentNullException(nameof(databaseName));
+            if (string.IsNullOrWhiteSpace(destinationPath))
+                throw new ArgumentNullException(nameof(destinationPath));
+
+            var destinationDir = PathEx.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrEmpty(destinationDir))
+                DirectoryEx.Create(destinationDir);
+
+            return this.ExecuteQueryAsync($"BACKUP DATABASE [{EscapeName(databaseName)}] TO DISK = N'{EscapeString(destinationPath)}' WITH FORMAT", cancellationToken);
+        }
+        public async Task RestoreDatabaseAsync(string databaseName, string sourcePath, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(databaseName))
+                throw new ArgumentNullException(nameof(databaseName));
+            if (string.IsNullOrWhiteSpace(sourcePath))
+                throw new ArgumentNullException(nameof(sourcePath));
+
+            var quotedDatabaseName = EscapeString(databaseName);
+            var bracketedDatabaseName = EscapeName(databaseName);
+            var quotedSourcePath = EscapeString(sourcePath);
+
+            await this.ExecuteQueryAsync($"USE master IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", cancellationToken).ConfigureAwait(false);
+            await this.ExecuteQueryAsync($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", cancellationToken).ConfigureAwait(false);
+            await this.ExecuteQueryAsync($"USE master RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", cancellationToken).ConfigureAwait(false);
+            await this.ExecuteQueryAsync($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", cancellationToken).ConfigureAwait(false);
         }
 
-        public void InitializeDatabase()
+        public async Task InitializeDatabaseAsync(CancellationToken cancellationToken)
         {
-            if (this.IsDatabaseInitialized())
-                throw new InvalidOperationException("The database has already been initialized.");
-
-            this.ExecuteNonQuery(Properties.Resources.Initialize);
-        }
-        public bool IsDatabaseInitialized()
-        {
-            this.ValidateConnection();
-            return (bool)this.ExecuteDataTable("SELECT CAST(CASE WHEN EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '__BuildMaster_DbSchemaChanges') THEN 1 ELSE 0 END AS BIT)").Rows[0][0];
-        }
-        public long GetSchemaVersion()
-        {
-            this.ValidateInitialization();
-
-            return (long)this.ExecuteDataTable("SELECT COALESCE(MAX(Numeric_Release_Number),0) FROM __BuildMaster_DbSchemaChanges").Rows[0][0];
-        }
-        public ChangeScript[] GetChangeHistory()
-        {
-            this.ValidateInitialization();
-
-            var dt = ExecuteDataTable(
-@"  SELECT [Numeric_Release_Number]
-        ,[Script_Id]
-        ,[Batch_Name]
-        ,MIN([Executed_Date]) [Executed_Date]
-        ,MIN([Success_Indicator]) [Success_Indicator]
-    FROM [__BuildMaster_DbSchemaChanges]
-GROUP BY [Script_Id], [Numeric_Release_Number], [Batch_Name]
-ORDER BY [Numeric_Release_Number], MIN([Executed_Date]), [Batch_Name]");
-
-            return dt.Rows
-                .Cast<DataRow>()
-                .Select(r => new SqlServerChangeScript(r))
-                .ToArray();
-        }
-        public ExecutionResult ExecuteChangeScript(long numericReleaseNumber, int scriptId, string scriptName, string scriptText)
-        {
-            this.ValidateInitialization();
-
-            var tables = this.ExecuteDataTable("SELECT * FROM __BuildMaster_DbSchemaChanges");
-            var rows = tables.Rows.Cast<DataRow>();
-
-            if (rows.Any(r => (int)r["Script_Id"] == scriptId))
-                return new ExecutionResult(ExecutionResult.Results.Skipped, string.Format("The script \"{0}\" was already executed.", scriptName));
-
-            var sqlMessageBuffer = new StringBuilder();
-            bool errorOccured = false;
-            EventHandler<LogReceivedEventArgs> logMessage = (s, e) =>
+            using (var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction())
             {
-                if (e.LogLevel == MessageLevel.Error)
-                    errorOccured = true;
+                int version = await this.GetChangeScriptVersionAsync(cancellationToken).ConfigureAwait(false);
+                if (version > 0)
+                    return;
 
-                sqlMessageBuffer.AppendLine(e.Message);
-            };
+                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken).ConfigureAwait(false);
 
-            this.LogReceived += logMessage;
+                transaction.Commit();
+            }
+        }
+        public async Task UpgradeSchemaAsync(IReadOnlyDictionary<int, Guid> canoncialGuids, CancellationToken cancellationToken)
+        {
+            if (canoncialGuids == null)
+                throw new ArgumentNullException(nameof(canoncialGuids));
 
-            try
+            var state = await this.GetStateAsync(cancellationToken);
+            if (state.ChangeScripterVersion == 0)
+                throw new InvalidOperationException("The database has not been initialized.");
+            if (state.ChangeScripterVersion != 1)
+                throw new InvalidOperationException("The database has already been upgraded.");
+
+            using (var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction())
             {
-                var cmd = this.CreateCommand();
-                try
+                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken, transaction).ConfigureAwait(false);
+
+                foreach (var script in state.Scripts)
                 {
-                    int scriptSequence = 0;
-                    foreach (var sqlCommand in SqlSplitter.SplitSqlScript(scriptText))
+                    Guid guid;
+                    if (canoncialGuids.TryGetValue(script.Id.ScriptId, out guid))
                     {
-                        if (string.IsNullOrWhiteSpace(sqlCommand))
-                            continue;
-
-                        scriptSequence++;
-                        try
-                        {
-                            cmd.CommandText = sqlCommand;
-                            cmd.ExecuteNonQuery();
-                        }
-                        catch (Exception ex)
-                        {
-                            this.InsertSchemaChange(numericReleaseNumber, scriptId, scriptName, scriptSequence, false);
-                            return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution encountered a fatal error. Error details: {1}", scriptName, ex.Message) + Util.ConcatNE(" Additional SQL Output: ", sqlMessageBuffer.ToString()));
-                        }
-
-                        this.InsertSchemaChange(numericReleaseNumber, scriptId, scriptName, scriptSequence, !errorOccured);
-
-                        if (errorOccured)
-                            return new ExecutionResult(ExecutionResult.Results.Failed, string.Format("The script \"{0}\" execution failed.", scriptName) + Util.ConcatNE(" SQL Error: ", sqlMessageBuffer.ToString()));
+                        await this.ExecuteQueryAsync(
+                            $"INSERT INTO [__BuildMaster_DbSchemaChanges2] ([Script_Id], [Script_Guid], [Script_Name], [Executed_Date], [Success_Indicator]) VALUES ({script.Id.ScriptId}, '{guid:D}', N'{EscapeString(script.Name)}', '{script.ExecutionDate:yyyy'-'MM'-'dd' 'hh':'mm':'ss'.'fff}', '{(YNIndicator)script.SuccessfullyExecuted}')",
+                            cancellationToken,
+                            transaction
+                        );
+                    }
+                    else
+                    {
                     }
                 }
-                finally
-                {
-                    if (this.sharedCommand == null)
-                        cmd.Dispose();
 
-                    if (this.sharedConnection == null)
-                        cmd.Connection.Dispose();
-                }
 
-                return new ExecutionResult(ExecutionResult.Results.Success, string.Format("The script \"{0}\" executed successfully.", scriptName) + Util.ConcatNE(" SQL Output: ", sqlMessageBuffer.ToString()));
+                transaction.Commit();
             }
-            finally 
+        }
+        public async Task<ChangeScriptState> GetStateAsync(CancellationToken cancellationToken)
+        {
+            int version = await this.GetChangeScriptVersionAsync(cancellationToken).ConfigureAwait(false);
+
+            if (version == 2)
             {
-                this.LogReceived -= logMessage;
+                return new ChangeScriptState(
+                    2,
+                    await this.ExecuteTableAsync("SELECT * FROM [__BuildMaster_DbSchemaChanges2]", ReadExecutionRecord, cancellationToken).ConfigureAwait(false)
+                );
             }
+
+            if (version == 1)
+            {
+                return new ChangeScriptState(
+                    1,
+                    await this.ExecuteTableAsync(
+                        "SELECT [Script_Id], [Numeric_Release_Number], [Batch_Name], [Executed_Date] = MIN([Executed_Date]), [Success_Indicator] = MIN([Success_Indicator]) FROM [__BuildMaster_DbSchemaChanges] WHERE [Script_Id] > 0 GROUP BY [Numeric_Release_Number], [Script_Id], [Batch_Name]",
+                        ReadLegacyExecutionRecord,
+                        cancellationToken
+                    ).ConfigureAwait(false)
+                );
+            }
+
+            return new ChangeScriptState(false);
         }
-
-        public void BackupDatabase(string databaseName, string destinationPath)
+        public async Task ExecuteChangeScriptAsync(ChangeScriptId scriptId, string scriptName, string scriptText, CancellationToken cancellationToken)
         {
-            if (!Directory.Exists(Path.GetDirectoryName(destinationPath)))
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+            int version = await this.GetChangeScriptVersionAsync(cancellationToken).ConfigureAwait(false);
+            if (version < 1 || version > 2)
+                throw new InvalidOperationException("The database has not been initialized.");
 
-            this.ExecuteNonQuery(string.Format(
-                "BACKUP DATABASE [{0}] TO DISK = N'{1}' WITH FORMAT",
-                databaseName.Replace("]", "]]"),
-                destinationPath.Replace("'", "''")));
-        }
-        public void RestoreDatabase(string databaseName, string sourcePath)
-        {
-            if (string.IsNullOrEmpty(databaseName))
-                throw new ArgumentNullException("databaseName");
-            if (string.IsNullOrEmpty(sourcePath))
-                throw new ArgumentNullException("sourcePath");
+            string getQuery;
+            if (version == 2)
+                getQuery = $"SELECT [Script_Name] FROM [__BuildMaster_DbSchemaChanges2] WHERE [Script_Guid] = '{scriptId.Guid:D}'";
+            else
+                getQuery = "SELECT [Batch_Name] FROM [__BuildMaster_DbSchemaChanges] WHERE [Script_Id] = " + scriptId.ScriptId;
 
-            var quotedDatabaseName = databaseName.Replace("'", "''");
-            var bracketedDatabaseName = databaseName.Replace("]", "]]");
-            var quotedSourcePath = sourcePath.Replace("'", "''");
+            bool alreadyRan = (await this.ExecuteTableAsync(getQuery, r => r[0]?.ToString(), cancellationToken).ConfigureAwait(false)).Count > 0;
+            if (alreadyRan)
+            {
+                this.LogInformation($"Script {scriptName} has already been executed; skipping...");
+                return;
+            }
 
-            this.ExecuteNonQuery(string.Format("USE master IF DB_ID('{0}') IS NULL CREATE DATABASE [{1}]", quotedDatabaseName, bracketedDatabaseName));
-            this.ExecuteNonQuery(string.Format("ALTER DATABASE [{0}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", bracketedDatabaseName));
-            this.ExecuteNonQuery(string.Format("USE master RESTORE DATABASE [{0}] FROM DISK = N'{1}' WITH REPLACE", bracketedDatabaseName, quotedSourcePath));
-            this.ExecuteNonQuery(string.Format("ALTER DATABASE [{0}] SET MULTI_USER", bracketedDatabaseName));
-        }
+            this.LogInformation($"Executing {scriptName}...");
 
-        public override bool IsAvailable()
-        {
-            return true;
-        }
-        public override string ToString()
-        {
+            YNIndicator success;
             try
             {
-                var csb = new SqlConnectionStringBuilder(this.ConnectionString);
-                var buffer = new StringBuilder("SQL Server database");
-                if (!string.IsNullOrEmpty(csb.InitialCatalog))
+                await this.ExecuteQueryAsync(scriptText, cancellationToken).ConfigureAwait(false);
+                success = true;
+                this.LogInformation(scriptName + " executed successfully.");
+            }
+            catch (SqlException ex)
+            {
+                foreach (SqlError error in ex.Errors)
                 {
-                    buffer.Append(" \"");
-                    buffer.Append(csb.InitialCatalog);
-                    buffer.Append('\"');
+                    if (error.Class > 10)
+                        this.LogError(error.Message);
+                    else
+                        this.LogInformation(error.Message);
                 }
 
-                if (!string.IsNullOrEmpty(csb.DataSource))
-                {
-                    buffer.Append(" on server \"");
-                    buffer.Append(csb.DataSource);
-                    buffer.Append('\"');
-                }
-
-                return buffer.ToString();
-            }
-            catch
-            {
-                return "SQL Server database";
-            }
-        }
-
-        public override void ExecuteQuery(string query)
-        {
-            this.ExecuteNonQuery(query);
-        }
-        public override void ExecuteQueries(string[] queries)
-        {
-            if (queries == null)
-                throw new ArgumentNullException("queries");
-
-            foreach (var query in queries)
-            {
-                this.ExecuteNonQuery(query);
-            }
-        }
-        public override void OpenConnection()
-        {
-            if (this.sharedConnection != null)
-            {
-                this.sharedConnection = this.CreateConnection();
-                this.sharedCommand = this.CreateCommand();
-            }
-        }
-        public override void CloseConnection()
-        {
-            if (this.sharedCommand != null)
-            {
-                this.sharedCommand.Dispose();
-                this.sharedCommand = null;
+                success = false;
             }
 
-            if (this.sharedConnection != null)
-            {
-                this.sharedConnection.Dispose();
-                this.sharedConnection = null;
-            }
-        }
-        public override void ValidateConnection()
-        {
-            var requiredPermissions = new[] { "SELECT", "INSERT", "CREATE TABLE" };
+            string updateQuery;
 
-            var userPermissions = this.ExecuteDataTable("SELECT [permission_name] FROM fn_my_permissions(NULL, 'database')")
-                .Rows
-                .Cast<DataRow>()
-                .Select(r => r[0].ToString())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);            
+            if (version == 2)
+                updateQuery = $"INSERT INTO [__BuildMaster_DbSchemaChanges2] ([Script_Id], [Script_Guid], [Script_Name], [Executed_Date], [Success_Indicator]) VALUES ({scriptId.ScriptId}, '{scriptId.Guid}', N'{EscapeString(scriptName)}', GETUTCDATE(), '{success}')";
+            else
+                updateQuery = $"INSERT INTO [__BuildMaster_DbSchemaChanges] ([Numeric_Release_Number], [Script_Id], [Script_Sequence], [Batch_Name], [Executed_Date], [Success_Indicator]) VALUES ({scriptId.LegacyReleaseSequence}, {scriptId.ScriptId}, 1, N'{EscapeString(scriptName)}', GETDATE(), '{success}')";
 
-            if (!userPermissions.IsSupersetOf(requiredPermissions))
-                throw new NotAvailableException(
-                    string.Format(
-                        "At a minimum, the user credentials in the connection string must be granted the following privileges to the database: {0} (missing {1})",
-                        string.Join(", ", requiredPermissions),
-                        string.Join(", ", requiredPermissions.Where(p => !userPermissions.Contains(p)))
-                    )
-                );
+            this.LogDebug($"Recording execution result for {scriptName}...");
+            await this.ExecuteQueryAsync(updateQuery, cancellationToken).ConfigureAwait(false);
+            this.LogDebug($"Execution result for {scriptName} recorded.");
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
-                this.CloseConnection();
+            if (disposing && !this.disposed)
+            {
+                this.connection?.Dispose();
+                this.connection = null;
+                this.disposed = true;
+            }
 
             base.Dispose(disposing);
         }
 
-        private void ValidateInitialization()
+        private async Task ExecuteQueryAsync(string query, CancellationToken cancellationToken, SqlTransaction transaction)
         {
-            if (!this.IsDatabaseInitialized())
-                throw new InvalidOperationException("The database has not been initialized.");
-        }
-
-        private SqlConnection CreateConnection()
-        {
-            var conStr = new SqlConnectionStringBuilder(ConnectionString) 
+            foreach (var sql in SqlSplitter.SplitSqlScript(query))
             {
-                Pooling = false
-            };
-
-            var con = new SqlConnection(conStr.ToString())
-            {
-                FireInfoMessageEventOnUserErrors = true
-            };
-
-            con.InfoMessage += (s, e) =>
-            {
-                foreach (SqlError errorMessage in e.Errors)
+                using (var command = new SqlCommand(sql, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction))
                 {
-                    if (errorMessage.Class > 10)
-                        this.LogError(errorMessage.Message);
+                    // using the cancellation token for timeouts, so disable it here
+                    command.CommandTimeout = 0;
+                    await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        private async Task<SqlConnection> GetConnectionAsync(CancellationToken cancellationToken)
+        {
+            SqlConnection connection;
+            lock (this.connectionLock)
+            {
+                connection = this.connection;
+            }
+
+            if (connection == null)
+            {
+                connection = new SqlConnection(this.ConnectionString);
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                lock (this.connectionLock)
+                {
+                    if (this.connection == null)
+                    {
+                        connection.InfoMessage += this.Connection_InfoMessage;
+                        this.connection = connection;
+                    }
                     else
-                        this.LogInformation(errorMessage.Message);
+                    {
+                        connection.Dispose();
+                        connection = this.connection;
+                    }
                 }
-            };
-
-            return con;
-        }
-        private SqlCommand CreateCommand()
-        {
-            if (this.sharedCommand != null)
-            {
-                this.sharedCommand.Parameters.Clear();
-                return this.sharedCommand;
             }
 
-            var cmd = new SqlCommand
-            {
-                CommandTimeout = 0,
-                CommandType = CommandType.Text,
-                CommandText = string.Empty
-            };
-
-            if (this.sharedConnection != null)
-            {
-                cmd.Connection = this.sharedConnection;
-            }
-            else
-            {
-                var con = this.CreateConnection();
-                con.Open();
-                cmd.Connection = con;
-            }
-
-            return cmd;
+            return connection;
         }
 
-        private void ExecuteNonQuery(string cmdText)
+        private void Connection_InfoMessage(object sender, SqlInfoMessageEventArgs e)
         {
-            if (string.IsNullOrEmpty(cmdText))
-                return;
-
-            var sqlErrorBuffr = new StringBuilder();
-            bool errorOccured = false;
-            EventHandler<LogReceivedEventArgs> logMessage = (s, e) =>
+            foreach (SqlError error in e.Errors)
             {
-                if (e.LogLevel != MessageLevel.Error) return;
-                
-                errorOccured = true;
-                sqlErrorBuffr.AppendLine(e.Message);
-            };
-
-            this.LogReceived += logMessage;
-
-            var cmd = this.CreateCommand();
-            try
+                if (error.Class > 10)
+                    this.LogError(error.Message);
+                else
+                    this.LogInformation(error.Message);
+            }
+        }
+        private async Task<List<TResult>> ExecuteTableAsync<TResult>(string query, Func<SqlDataReader, TResult> adapter, CancellationToken cancellationToken)
+        {
+            using (var command = new SqlCommand(query, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)))
             {
-                foreach (var commandText in SqlSplitter.SplitSqlScript(cmdText))
+                // using the cancellation token for timeouts, so disable it here
+                command.CommandTimeout = 0;
+
+                using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    if (string.IsNullOrWhiteSpace(commandText)) continue;
+                    var table = new List<TResult>();
 
-                    cmd.CommandText = commandText;
-                    cmd.ExecuteNonQuery();
+                    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        table.Add(adapter(reader));
+                    }
 
-                    if (errorOccured)
-                        throw new InvalidOperationException("An error occurred while executing a query: " + sqlErrorBuffr.ToString());
-
+                    return table;
                 }
             }
-            finally
-            {
-                this.LogReceived -= logMessage;
-
-                if (this.sharedCommand == null)
-                    cmd.Dispose();
-
-                if (this.sharedConnection == null)
-                    cmd.Connection.Close();
-            }
         }
-        private DataTable ExecuteDataTable(string cmdText)
+        private async Task<int> GetChangeScriptVersionAsync(CancellationToken cancellationToken)
         {
-            var dt = new DataTable();
-            var cmd = this.CreateCommand();
-            cmd.CommandText = cmdText;
-            try
-            {
-                dt.Load(cmd.ExecuteReader());
-            }
-            finally
-            {
-                if (this.sharedCommand == null)
-                    cmd.Dispose();
+            var table = await this.ExecuteTableAsync(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN ('__BuildMaster_DbSchemaChanges', '__BuildMaster_DbSchemaChanges2')",
+                t => t["TABLE_NAME"]?.ToString(),
+                cancellationToken
+            ).ConfigureAwait(false);
 
-                if (this.sharedConnection == null)
-                    cmd.Connection.Close();
-            }
-
-            return dt;
+            bool hasV1Table = table.Contains("__BuildMaster_DbSchemaChanges", StringComparer.OrdinalIgnoreCase);
+            bool hasV2Table = table.Contains("__BuildMaster_DbSchemaChanges2", StringComparer.OrdinalIgnoreCase);
+            return hasV2Table ? 2 : hasV1Table ? 1 : 0;
         }
 
-        private void InsertSchemaChange(long numericReleaseNumber, int scriptId, string scriptName, int scriptSequence, bool success)
+        private static string EscapeName(string name) => name?.Replace("]", "]]");
+        private static string EscapeString(string s) => s?.Replace("'", "''");
+        private static ChangeScriptExecutionRecord ReadExecutionRecord(SqlDataReader r)
         {
-            this.ExecuteQuery(string.Format(
-                "INSERT INTO __BuildMaster_DbSchemaChanges "
-                + " (Numeric_Release_Number, Script_Id, Script_Sequence, Batch_Name, Executed_Date, Success_Indicator) "
-                + "VALUES "
-                + "({0}, {1}, {2}, '{3}', GETDATE(), '{4}')",
-                numericReleaseNumber,
-                scriptId,
-                scriptSequence,
-                scriptName.Replace("'", "''"),
-                success ? "Y" : "N")
+            return new ChangeScriptExecutionRecord(
+                new ChangeScriptId((int)r["Script_Id"], (Guid)r["Script_Guid"]),
+                r["Script_Name"]?.ToString(),
+                new DateTime(((DateTime)r["Executed_Date"]).Ticks, DateTimeKind.Utc),
+                YNIndicator.Parse(r["Success_Indicator"]?.ToString())
+            );
+        }
+        private static ChangeScriptExecutionRecord ReadLegacyExecutionRecord(SqlDataReader r)
+        {
+            return new ChangeScriptExecutionRecord(
+                new ChangeScriptId((int)r["Script_Id"], (long)r["Numeric_Release_Number"]),
+                r["Batch_Name"]?.ToString(),
+                new DateTime(((DateTime)r["Executed_Date"]).Ticks, DateTimeKind.Local).ToUniversalTime(),
+                YNIndicator.Parse(r["Success_Indicator"]?.ToString())
             );
         }
     }

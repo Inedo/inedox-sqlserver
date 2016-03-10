@@ -61,22 +61,24 @@ namespace Inedo.BuildMasterExtensions.SqlServer.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to CREATE TABLE __BuildMaster_DbSchemaChanges (
-        ///  [Numeric_Release_Number] BIGINT NOT NULL,
-        ///  [Script_Id] INT NOT NULL,
-        ///  [Script_Sequence] INT NOT NULL,
+        ///   Looks up a localized string similar to CREATE TABLE [__BuildMaster_DbSchemaChanges]
+        ///(
+        ///	[ScriptExecution_Id] INT IDENTITY(1, 1) NOT NULL,
+        ///	[Script_Guid] GUID NOT NULL,
+        ///	[Script_Name] NVARCHAR(200) NOT NULL,
+        ///	[Executed_Date] DATETIME NOT NULL,
+        ///	[Success_Indicator] CHAR(1) NOT NULL,
         ///
-        ///  [Batch_Name] NVARCHAR(50) NOT NULL,
-        ///  [Executed_Date] DATETIME NOT NULL,
-        ///  [Success_Indicator] CHAR(1) NOT NULL,
-        ///
-        ///  CONSTRAINT [__BuildMaster_DbSchemaChangesPK]
-        ///	PRIMARY KEY ([Numeric_Release_Number], [Script_Id], [Script_Sequence])
+        ///	CONSTRAINT [__BuildMaster_DbSchemaChangesPK]
+        ///		PRIMARY KEY NONCLUSTERED ([Script_Guid])
         ///)
         ///GO
         ///
-        ///INSERT INTO [__BuildMaster_DbSchemaChanges]
-        ///	([Numeric_Release_Number], [Script_Id], [Script_Sequence],  [rest of string was truncated]&quot;;.
+        ///CREATE UNIQUE CLUSTERED INDEX [__BuildMaster_DbSchemaChangesUIX]
+        ///	ON [__BuildMaster_DbSchemaChanges] ([ScriptExecution_Id])
+        ///GO
+        ///
+        ///INSERT INTO [__BuildMaster_Db [rest of string was truncated]&quot;;.
         /// </summary>
         internal static string Initialize {
             get {
