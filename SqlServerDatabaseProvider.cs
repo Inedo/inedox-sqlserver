@@ -52,14 +52,41 @@ namespace Inedo.BuildMasterExtensions.SqlServer
             if (string.IsNullOrWhiteSpace(sourcePath))
                 throw new ArgumentNullException(nameof(sourcePath));
 
+            var connectionString = new SqlConnectionStringBuilder(this.ConnectionString) { InitialCatalog = "master" }.ToString();
+
             var quotedDatabaseName = EscapeString(databaseName);
             var bracketedDatabaseName = EscapeName(databaseName);
             var quotedSourcePath = EscapeString(sourcePath);
 
-            await this.ExecuteQueryAsync($"USE master IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", cancellationToken).ConfigureAwait(false);
-            await this.ExecuteQueryAsync($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", cancellationToken).ConfigureAwait(false);
-            await this.ExecuteQueryAsync($"USE master RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", cancellationToken).ConfigureAwait(false);
-            await this.ExecuteQueryAsync($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", cancellationToken).ConfigureAwait(false);
+            using (var conn = new SqlConnection(connectionString))
+            {
+                conn.InfoMessage += this.Connection_InfoMessage;
+                await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                using (var cmd = new SqlCommand($"IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", conn))
+                {
+                    cmd.CommandTimeout = 0;
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", conn))
+                {
+                    cmd.CommandTimeout = 0;
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                using (var cmd = new SqlCommand($"RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", conn))
+                {
+                    cmd.CommandTimeout = 0;
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", conn))
+                {
+                    cmd.CommandTimeout = 0;
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
         }
 
         public async Task InitializeDatabaseAsync(CancellationToken cancellationToken)
