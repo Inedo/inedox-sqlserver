@@ -64,7 +64,6 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
-    <Compile Include="SqlServerChangeScript.cs" />
     <Compile Include="SqlServerDatabaseProvider.cs" />
     <Compile Include="SqlServerDatabaseProviderEditor.cs">
       <SubType>ASPXCodeBehind</SubType>
