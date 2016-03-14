@@ -93,11 +93,11 @@ namespace Inedo.BuildMasterExtensions.SqlServer
         {
             using (var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction())
             {
-                int version = await this.GetChangeScriptVersionAsync(cancellationToken).ConfigureAwait(false);
+                int version = await this.GetChangeScriptVersionAsync(cancellationToken, transaction).ConfigureAwait(false);
                 if (version > 0)
                     return;
 
-                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken).ConfigureAwait(false);
+                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken, transaction).ConfigureAwait(false);
 
                 transaction.Commit();
             }
@@ -281,9 +281,9 @@ namespace Inedo.BuildMasterExtensions.SqlServer
                     this.LogInformation(error.Message);
             }
         }
-        private async Task<List<TResult>> ExecuteTableAsync<TResult>(string query, Func<SqlDataReader, TResult> adapter, CancellationToken cancellationToken)
+        private async Task<List<TResult>> ExecuteTableAsync<TResult>(string query, Func<SqlDataReader, TResult> adapter, CancellationToken cancellationToken, SqlTransaction transaction = null)
         {
-            using (var command = new SqlCommand(query, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)))
+            using (var command = new SqlCommand(query, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction))
             {
                 // using the cancellation token for timeouts, so disable it here
                 command.CommandTimeout = 0;
@@ -301,12 +301,13 @@ namespace Inedo.BuildMasterExtensions.SqlServer
                 }
             }
         }
-        private async Task<int> GetChangeScriptVersionAsync(CancellationToken cancellationToken)
+        private async Task<int> GetChangeScriptVersionAsync(CancellationToken cancellationToken, SqlTransaction transaction = null)
         {
             var table = await this.ExecuteTableAsync(
                 "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN ('__BuildMaster_DbSchemaChanges', '__BuildMaster_DbSchemaChanges2')",
                 t => t["TABLE_NAME"]?.ToString(),
-                cancellationToken
+                cancellationToken,
+                transaction
             ).ConfigureAwait(false);
 
             bool hasV1Table = table.Contains("__BuildMaster_DbSchemaChanges", StringComparer.OrdinalIgnoreCase);
