@@ -6,12 +6,12 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Inedo.BuildMaster;
 using Inedo.BuildMaster.Extensibility.DatabaseConnections;
 using Inedo.BuildMaster.Web;
 using Inedo.BuildMasterExtensions.SqlServer.Properties;
 using Inedo.Data;
 using Inedo.Diagnostics;
+using Inedo.Documentation;
 using Inedo.IO;
 
 namespace Inedo.BuildMasterExtensions.SqlServer
