@@ -65,26 +65,38 @@ namespace Inedo.BuildMasterExtensions.SqlServer
 
                 using (var cmd = new SqlCommand($"IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", conn))
                 {
+                    if (this.VerboseLogging)
+                        this.LogDebug("Executing query: " + cmd.CommandText);
+
                     cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
 
                 using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", conn))
                 {
+                    if (this.VerboseLogging)
+                        this.LogDebug("Executing query: " + cmd.CommandText);
+
                     cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
 
                 using (var cmd = new SqlCommand($"RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", conn))
                 {
+                    if (this.VerboseLogging)
+                        this.LogDebug("Executing query: " + cmd.CommandText);
+
                     cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
 
                 using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", conn))
                 {
+                    if (this.VerboseLogging)
+                        this.LogDebug("Executing query: " + cmd.CommandText);
+
                     cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
             }
         }
@@ -232,6 +244,9 @@ namespace Inedo.BuildMasterExtensions.SqlServer
         {
             foreach (var sql in SqlSplitter.SplitSqlScript(query))
             {
+                if (this.VerboseLogging)
+                    this.LogDebug("Executing query: " + query);
+
                 using (var command = new SqlCommand(sql, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction))
                 {
                     // using the cancellation token for timeouts, so disable it here
