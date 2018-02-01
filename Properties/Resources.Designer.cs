@@ -19,7 +19,7 @@ namespace Inedo.BuildMasterExtensions.SqlServer.Properties {
     // class via a tool like ResGen or Visual Studio.
     // To add or remove a member, edit your .ResX file then rerun ResGen
     // with the /str option, or rebuild your VS project.
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("System.Resources.Tools.StronglyTypedResourceBuilder", "4.0.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("System.Resources.Tools.StronglyTypedResourceBuilder", "15.0.0.0")]
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
     internal class Resources {
@@ -61,24 +61,23 @@ namespace Inedo.BuildMasterExtensions.SqlServer.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to CREATE TABLE [__BuildMaster_DbSchemaChanges]
+        ///   Looks up a localized string similar to CREATE TABLE [__BuildMaster_DbSchemaChanges2]
         ///(
-        ///	[ScriptExecution_Id] INT IDENTITY(1, 1) NOT NULL,
-        ///	[Script_Guid] GUID NOT NULL,
+        ///	[Script_Id] INT NOT NULL,
+        ///	[Script_Guid] UNIQUEIDENTIFIER NOT NULL,
         ///	[Script_Name] NVARCHAR(200) NOT NULL,
         ///	[Executed_Date] DATETIME NOT NULL,
         ///	[Success_Indicator] CHAR(1) NOT NULL,
         ///
-        ///	CONSTRAINT [__BuildMaster_DbSchemaChangesPK]
+        ///	CONSTRAINT [__BuildMaster_DbSchemaChanges2PK]
         ///		PRIMARY KEY NONCLUSTERED ([Script_Guid])
         ///)
         ///GO
         ///
-        ///CREATE UNIQUE CLUSTERED INDEX [__BuildMaster_DbSchemaChangesUIX]
-        ///	ON [__BuildMaster_DbSchemaChanges] ([ScriptExecution_Id])
+        ///CREATE CLUSTERED INDEX [__BuildMaster_DbSchemaChanges2IX]
+        ///	ON [__BuildMaster_DbSchemaChanges2] ([Script_Id])
         ///GO
-        ///
-        ///INSERT INTO [__BuildMaster_Db [rest of string was truncated]&quot;;.
+        ///.
         /// </summary>
         internal static string Initialize {
             get {
