@@ -1,6 +1,6 @@
 # inedox-sqlserver
 
-[![Build status](https://ci.appveyor.com/api/projects/status/62tyjanu05ml1a86/branch/master?svg=true)](https://ci.appveyor.com/project/Inedo/inedox-sqlserver/branch/master)
+[![Build status](https://buildmaster.inedo.com/api/ci-badges/image?API_Key=badges&$ApplicationId=27)](https://buildmaster.inedo.com/api/ci-badges/link?API_Key=badges&$ApplicationId=27)
 
 Contains a database provider for Microsoft SQL Server.
 
