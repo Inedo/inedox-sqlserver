@@ -6,21 +6,21 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Inedo.BuildMaster.Extensibility.DatabaseConnections;
-using Inedo.Extensions.SqlServer.Properties;
-using Inedo.Data;
-using Inedo.Diagnostics;
+using Inedo.Extensibility;
 using Inedo.Documentation;
-using Inedo.IO;
-using Inedo.Web;
+using Inedo.Extensions.SqlServer.Properties;
+using Inedo.Extensibility.DatabaseConnections;
+using System.IO;
 using Inedo.Serialization;
+using Inedo.Diagnostics;
+using Inedo.IO;
+using Inedo.Data;
 
 namespace Inedo.Extensions.SqlServer
 {
     [DisplayName("SQL Server")]
     [Description("Provides functionality for managing change scripts in Microsoft SQL Server databases.")]
     [Tag("sql-server"), Tag("databases")]
-    [CustomEditor(typeof(SqlServerDatabaseProviderEditor))]
     [PersistFrom("Inedo.BuildMasterExtensions.SqlServer.SqlServerDatabaseProvider,SqlServer")]
     public sealed class SqlServerDatabaseProvider : DatabaseConnection, IBackupRestore, IChangeScriptExecuter
     {
@@ -41,7 +41,7 @@ namespace Inedo.Extensions.SqlServer
             if (string.IsNullOrWhiteSpace(destinationPath))
                 throw new ArgumentNullException(nameof(destinationPath));
 
-            var destinationDir = PathEx.GetDirectoryName(destinationPath);
+            var destinationDir = Path.GetDirectoryName(destinationPath);
             if (!string.IsNullOrEmpty(destinationDir))
                 DirectoryEx.Create(destinationDir);
 
