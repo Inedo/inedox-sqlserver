@@ -6,13 +6,12 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Inedo.BuildMaster.Extensibility.DatabaseConnections;
-using Inedo.Extensions.SqlServer.Properties;
 using Inedo.Data;
 using Inedo.Diagnostics;
 using Inedo.Documentation;
+using Inedo.Extensibility.DatabaseConnections;
+using Inedo.Extensions.SqlServer.Properties;
 using Inedo.IO;
-using Inedo.Web;
 using Inedo.Serialization;
 
 namespace Inedo.Extensions.SqlServer
@@ -20,7 +19,6 @@ namespace Inedo.Extensions.SqlServer
     [DisplayName("SQL Server")]
     [Description("Provides functionality for managing change scripts in Microsoft SQL Server databases.")]
     [Tag("sql-server"), Tag("databases")]
-    [CustomEditor(typeof(SqlServerDatabaseProviderEditor))]
     [PersistFrom("Inedo.BuildMasterExtensions.SqlServer.SqlServerDatabaseProvider,SqlServer")]
     public sealed class SqlServerDatabaseProvider : DatabaseConnection, IBackupRestore, IChangeScriptExecuter
     {

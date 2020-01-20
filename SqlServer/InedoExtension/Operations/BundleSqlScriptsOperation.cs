@@ -28,11 +28,11 @@ namespace Inedo.Extensions.SqlServer.Operations
         public string SourceDirectory { get; set; }
         [Category("File Masks")]
         [ScriptAlias("Include")]
-        [Description(CommonDescriptions.MaskingHelp)]
+        [MaskingDescription]
         public IEnumerable<string> Includes { get; set; } = new[] { "**.sql" };
         [Category("File Masks")]
         [ScriptAlias("Exclude")]
-        [Description(CommonDescriptions.MaskingHelp)]
+        [MaskingDescription]
         public IEnumerable<string> Excludes { get; set; }
         [Required]
         [ScriptAlias("OutputFile")]
