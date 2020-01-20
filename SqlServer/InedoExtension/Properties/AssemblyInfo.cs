@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Inedo.Extensibility;
+using System;
 using System.Reflection;
 using System.Resources;
 using System.Runtime.InteropServices;
@@ -16,3 +17,4 @@ using Inedo.Extensibility;
 [assembly: AssemblyFileVersion("1.0.0")]
 [assembly: CLSCompliant(false)]
 [assembly: ComVisible(false)]
+[assembly: AppliesTo(InedoProduct.BuildMaster)]

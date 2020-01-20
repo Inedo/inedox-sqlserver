@@ -39,7 +39,7 @@ namespace Inedo.Extensions.SqlServer
             if (string.IsNullOrWhiteSpace(destinationPath))
                 throw new ArgumentNullException(nameof(destinationPath));
 
-            var destinationDir = PathEx.GetDirectoryName(destinationPath);
+            var destinationDir = Path.GetDirectoryName(destinationPath);
             if (!string.IsNullOrEmpty(destinationDir))
                 DirectoryEx.Create(destinationDir);
 
