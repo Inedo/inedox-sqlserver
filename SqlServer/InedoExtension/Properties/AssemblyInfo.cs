@@ -2,6 +2,9 @@
 using System.Reflection;
 using System.Resources;
 using System.Runtime.InteropServices;
+using Inedo.Extensibility;
+
+[assembly: AppliesTo(InedoProduct.BuildMaster)]
 
 [assembly: AssemblyTitle("SQL Server")]
 [assembly: AssemblyDescription("Contains a database provider for Microsoft SQL Server.")]
