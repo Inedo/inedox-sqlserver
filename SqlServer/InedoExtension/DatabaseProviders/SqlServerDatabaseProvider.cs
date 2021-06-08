@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data.SqlClient;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -13,6 +12,12 @@ using Inedo.Extensibility.DatabaseConnections;
 using Inedo.Extensions.SqlServer.Properties;
 using Inedo.IO;
 using Inedo.Serialization;
+
+#if NET452
+using System.Data.SqlClient;
+#else
+using Microsoft.Data.SqlClient;
+#endif
 
 namespace Inedo.Extensions.SqlServer
 {

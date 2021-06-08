@@ -10,7 +10,7 @@ using Inedo.Documentation;
 using Inedo.Extensibility;
 using Inedo.Extensibility.Operations;
 using Inedo.IO;
-using Inedo.Web.Plans.ArgumentEditors;
+using Inedo.Web;
 
 namespace Inedo.Extensions.SqlServer.Operations
 {
@@ -24,7 +24,7 @@ namespace Inedo.Extensions.SqlServer.Operations
         [ScriptAlias("Directory")]
         [DisplayName("From directory")]
         [PlaceholderText("$WorkingDirectory")]
-        [FilePathEditor]
+        [FieldEditMode(FieldEditMode.ServerDirectoryPath)]
         public string SourceDirectory { get; set; }
         [Category("File Masks")]
         [ScriptAlias("Include")]
@@ -64,7 +64,7 @@ namespace Inedo.Extensions.SqlServer.Operations
             var outputFileName = context.ResolvePath(this.OutputFile);
             DirectoryEx.Create(PathEx.GetDirectoryName(outputFileName));
 
-            using (var buffer = new SlimMemoryStream())
+            using (var buffer = new TemporaryStream())
             {
                 using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, true))
                 {
