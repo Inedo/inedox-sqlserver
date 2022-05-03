@@ -12,12 +12,7 @@ using Inedo.Extensibility.DatabaseConnections;
 using Inedo.Extensions.SqlServer.Properties;
 using Inedo.IO;
 using Inedo.Serialization;
-
-#if NET452
-using System.Data.SqlClient;
-#else
 using Microsoft.Data.SqlClient;
-#endif
 
 namespace Inedo.Extensions.SqlServer
 {
@@ -28,14 +23,14 @@ namespace Inedo.Extensions.SqlServer
     public sealed class SqlServerDatabaseProvider : DatabaseConnection, IBackupRestore, IChangeScriptExecuter
     {
         private SqlConnection connection;
-        private readonly object connectionLock = new object();
+        private readonly object connectionLock = new();
         private bool disposed;
 
         public int MaxChangeScriptVersion => 2;
 
         public static IEnumerable<Assembly> EnumerateChangeScripterAssemblies() => Enumerable.Empty<Assembly>();
 
-        public override Task ExecuteQueryAsync(string query, CancellationToken cancellationToken) => this.ExecuteQueryAsync(query, cancellationToken, null);
+        public override Task ExecuteQueryAsync(string query, CancellationToken cancellationToken) => this.ExecuteQueryAsync(query, null, cancellationToken);
 
         public Task BackupDatabaseAsync(string databaseName, string destinationPath, CancellationToken cancellationToken)
         {
@@ -63,61 +58,57 @@ namespace Inedo.Extensions.SqlServer
             var bracketedDatabaseName = EscapeName(databaseName);
             var quotedSourcePath = EscapeString(sourcePath);
 
-            using (var conn = new SqlConnection(connectionString))
+            using var conn = new SqlConnection(connectionString);
+            conn.InfoMessage += this.Connection_InfoMessage;
+            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            using (var cmd = new SqlCommand($"IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", conn))
             {
-                conn.InfoMessage += this.Connection_InfoMessage;
-                await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+                if (this.VerboseLogging)
+                    this.LogDebug("Executing query: " + cmd.CommandText);
 
-                using (var cmd = new SqlCommand($"IF DB_ID('{quotedDatabaseName}') IS NULL CREATE DATABASE [{bracketedDatabaseName}]", conn))
-                {
-                    if (this.VerboseLogging)
-                        this.LogDebug("Executing query: " + cmd.CommandText);
+                cmd.CommandTimeout = 0;
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-                    cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                }
+            using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", conn))
+            {
+                if (this.VerboseLogging)
+                    this.LogDebug("Executing query: " + cmd.CommandText);
 
-                using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE", conn))
-                {
-                    if (this.VerboseLogging)
-                        this.LogDebug("Executing query: " + cmd.CommandText);
+                cmd.CommandTimeout = 0;
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-                    cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                }
+            using (var cmd = new SqlCommand($"RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", conn))
+            {
+                if (this.VerboseLogging)
+                    this.LogDebug("Executing query: " + cmd.CommandText);
 
-                using (var cmd = new SqlCommand($"RESTORE DATABASE [{bracketedDatabaseName}] FROM DISK = N'{quotedSourcePath}' WITH REPLACE", conn))
-                {
-                    if (this.VerboseLogging)
-                        this.LogDebug("Executing query: " + cmd.CommandText);
+                cmd.CommandTimeout = 0;
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-                    cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                }
+            using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", conn))
+            {
+                if (this.VerboseLogging)
+                    this.LogDebug("Executing query: " + cmd.CommandText);
 
-                using (var cmd = new SqlCommand($"ALTER DATABASE [{bracketedDatabaseName}] SET MULTI_USER", conn))
-                {
-                    if (this.VerboseLogging)
-                        this.LogDebug("Executing query: " + cmd.CommandText);
-
-                    cmd.CommandTimeout = 0;
-                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                }
+                cmd.CommandTimeout = 0;
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
         public async Task InitializeDatabaseAsync(CancellationToken cancellationToken)
         {
-            using (var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction())
-            {
-                int version = await this.GetChangeScriptVersionAsync(cancellationToken, transaction).ConfigureAwait(false);
-                if (version > 0)
-                    return;
+            using var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction();
+            int version = await this.GetChangeScriptVersionAsync(cancellationToken, transaction).ConfigureAwait(false);
+            if (version > 0)
+                return;
 
-                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken, transaction).ConfigureAwait(false);
+            await this.ExecuteQueryAsync(Resources.Initialize, transaction, cancellationToken).ConfigureAwait(false);
 
-                transaction.Commit();
-            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         public async Task UpgradeSchemaAsync(IReadOnlyDictionary<int, Guid> canoncialGuids, CancellationToken cancellationToken)
         {
@@ -130,29 +121,26 @@ namespace Inedo.Extensions.SqlServer
             if (state.ChangeScripterVersion != 1)
                 throw new InvalidOperationException("The database has already been upgraded.");
 
-            using (var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction())
+            using var transaction = (await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false)).BeginTransaction();
+            await this.ExecuteQueryAsync(Resources.Initialize, transaction, cancellationToken).ConfigureAwait(false);
+
+            foreach (var script in state.Scripts)
             {
-                await this.ExecuteQueryAsync(Resources.Initialize, cancellationToken, transaction).ConfigureAwait(false);
-
-                foreach (var script in state.Scripts)
+                if (canoncialGuids.TryGetValue(script.Id.ScriptId, out var guid))
                 {
-                    Guid guid;
-                    if (canoncialGuids.TryGetValue(script.Id.ScriptId, out guid))
-                    {
-                        await this.ExecuteQueryAsync(
-                            $"INSERT INTO [__BuildMaster_DbSchemaChanges2] ([Script_Id], [Script_Guid], [Script_Name], [Executed_Date], [Success_Indicator]) VALUES ({script.Id.ScriptId}, '{guid:D}', N'{EscapeString(script.Name)}', '{script.ExecutionDate:yyyy'-'MM'-'dd' 'hh':'mm':'ss'.'fff}', '{(YNIndicator)script.SuccessfullyExecuted}')",
-                            cancellationToken,
-                            transaction
-                        );
-                    }
-                    else
-                    {
-                    }
+                    await this.ExecuteQueryAsync(
+                        $"INSERT INTO [__BuildMaster_DbSchemaChanges2] ([Script_Id], [Script_Guid], [Script_Name], [Executed_Date], [Success_Indicator]) VALUES ({script.Id.ScriptId}, '{guid:D}', N'{EscapeString(script.Name)}', '{script.ExecutionDate:yyyy'-'MM'-'dd' 'hh':'mm':'ss'.'fff}', '{(YNIndicator)script.SuccessfullyExecuted}')",
+                        transaction
+,
+                        cancellationToken);
                 }
-
-
-                transaction.Commit();
+                else
+                {
+                }
             }
+
+
+            transaction.Commit();
         }
         public async Task<ChangeScriptState> GetStateAsync(CancellationToken cancellationToken)
         {
@@ -245,19 +233,17 @@ namespace Inedo.Extensions.SqlServer
             base.Dispose(disposing);
         }
 
-        private async Task ExecuteQueryAsync(string query, CancellationToken cancellationToken, SqlTransaction transaction)
+        private async Task ExecuteQueryAsync(string query, SqlTransaction transaction, CancellationToken cancellationToken)
         {
             foreach (var sql in SqlSplitter.SplitSqlScript(query))
             {
                 if (this.VerboseLogging)
                     this.LogDebug("Executing query: " + query);
 
-                using (var command = new SqlCommand(sql, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction))
-                {
-                    // using the cancellation token for timeouts, so disable it here
-                    command.CommandTimeout = 0;
-                    await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-                }
+                using var command = new SqlCommand(sql, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction);
+                // using the cancellation token for timeouts, so disable it here
+                command.CommandTimeout = 0;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
         private async Task<SqlConnection> GetConnectionAsync(CancellationToken cancellationToken)
@@ -303,23 +289,19 @@ namespace Inedo.Extensions.SqlServer
         }
         private async Task<List<TResult>> ExecuteTableAsync<TResult>(string query, Func<SqlDataReader, TResult> adapter, CancellationToken cancellationToken, SqlTransaction transaction = null)
         {
-            using (var command = new SqlCommand(query, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction))
+            using var command = new SqlCommand(query, await this.GetConnectionAsync(cancellationToken).ConfigureAwait(false), transaction);
+            // using the cancellation token for timeouts, so disable it here
+            command.CommandTimeout = 0;
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            var table = new List<TResult>();
+
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                // using the cancellation token for timeouts, so disable it here
-                command.CommandTimeout = 0;
-
-                using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    var table = new List<TResult>();
-
-                    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                    {
-                        table.Add(adapter(reader));
-                    }
-
-                    return table;
-                }
+                table.Add(adapter(reader));
             }
+
+            return table;
         }
         private async Task<int> GetChangeScriptVersionAsync(CancellationToken cancellationToken, SqlTransaction transaction = null)
         {

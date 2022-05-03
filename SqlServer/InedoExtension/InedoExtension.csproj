@@ -3,7 +3,7 @@
     <AssemblyName>SqlServer</AssemblyName>
     <RootNamespace>Inedo.Extensions.SqlServer</RootNamespace>
     <OutputType>Library</OutputType>
-    <TargetFrameworks>net452;net5.0</TargetFrameworks>
+    <TargetFramework>net6.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
@@ -24,14 +24,7 @@
     <EmbeddedResource Include="Operations\inedosql.exe" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Inedo.SDK" Version="1.12.0" />
-  </ItemGroup>
-  <ItemGroup Condition="$(TargetFramework) == 'net452'">
-    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
-    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <Reference Include="System.IO.Compression" />
-  </ItemGroup>
-  <ItemGroup Condition="$(TargetFramework)=='net5.0'">
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="2.0.1" />
+    <PackageReference Include="Inedo.SDK" Version="2.0.0-ci.16" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="4.0.1" />
   </ItemGroup>
 </Project>
