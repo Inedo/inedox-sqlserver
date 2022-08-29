@@ -1,10 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
 using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
 using Inedo.Data;
 using Inedo.Diagnostics;
 using Inedo.Documentation;
@@ -256,7 +251,7 @@ namespace Inedo.Extensions.SqlServer
 
             if (connection == null)
             {
-                connection = new SqlConnection(this.ConnectionString);
+                connection = new SqlConnection(DbUpdater.InedoSqlUtil.EnsureRequireEncryptionDefaultsToFalse(this.ConnectionString));
                 await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
                 lock (this.connectionLock)

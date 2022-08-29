@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace Inedo.Extensions.SqlServer
 {
@@ -8,7 +7,7 @@ namespace Inedo.Extensions.SqlServer
     /// </summary>
     internal static class SqlSplitter
     {
-        private static readonly Regex GoRegex = new Regex(@"^\s*GO\s*$", RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        private static readonly Regex GoRegex = new(@"^\s*GO\s*$", RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
         /// <summary>
         /// Returns a collection of the SQL scripts in a string separated by canonical GO statements.
@@ -88,18 +87,18 @@ namespace Inedo.Extensions.SqlServer
 
             int startPos = 0;
 
-            foreach (Match go in gos)
+            foreach (Match go in gos.Cast<Match>())
             {
                 if (IsInAnyRun(ignored, go.Index))
                     continue;
 
-                yield return script.Substring(startPos, go.Index - startPos);
+                yield return script[startPos..go.Index];
 
                 startPos = go.Index + go.Length;
             }
 
             if (startPos < script.Length)
-                yield return script.Substring(startPos);
+                yield return script[startPos..];
         }
 
         private static bool IsInAnyRun(List<Run> runs, int index)

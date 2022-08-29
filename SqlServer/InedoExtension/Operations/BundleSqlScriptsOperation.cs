@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.IO;
+﻿using System.ComponentModel;
 using System.IO.Compression;
-using System.Linq;
-using System.Threading.Tasks;
 using Inedo.Diagnostics;
 using Inedo.Documentation;
 using Inedo.Extensibility;
@@ -78,21 +73,19 @@ namespace Inedo.Extensions.SqlServer.Operations
 
                 buffer.Position = 0;
 
-                using (var outputStream = FileEx.Open(outputFileName, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.SequentialScan))
+                using var outputStream = FileEx.Open(outputFileName, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.SequentialScan);
+                using (var inedoSqlStream = typeof(BundleSqlScriptsOperation).Assembly.GetManifestResourceStream("Inedo.Extensions.SqlServer.Operations.inedosql.exe"))
                 {
-                    using (var inedoSqlStream = typeof(BundleSqlScriptsOperation).Assembly.GetManifestResourceStream("Inedo.Extensions.SqlServer.Operations.inedosql.exe"))
-                    {
-                        inedoSqlStream.CopyTo(outputStream);
-                    }
-
-                    buffer.CopyTo(outputStream);
+                    inedoSqlStream.CopyTo(outputStream);
                 }
+
+                buffer.CopyTo(outputStream);
             }
 
             this.LogInformation($"{outputFileName} created.");
             return Complete;
 
-            string getEntryName(string fullName) => fullName.Substring(0, sourcePath.Length).TrimStart('\\', '/').Replace('\\', '/');
+            string getEntryName(string fullName) => fullName[..sourcePath.Length].TrimStart('\\', '/').Replace('\\', '/');
         }
 
         protected override ExtendedRichDescription GetDescription(IOperationConfiguration config)
