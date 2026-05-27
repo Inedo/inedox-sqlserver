@@ -1,121 +1,121 @@
 ﻿using System.Text.RegularExpressions;
 
-namespace Inedo.Extensions.SqlServer
+namespace Inedo.Extensions.SqlServer;
+
+/// <summary>
+/// Contains a method for splitting SQL scripts.
+/// </summary>
+internal static partial class SqlSplitter
 {
     /// <summary>
-    /// Contains a method for splitting SQL scripts.
+    /// Returns a collection of the SQL scripts in a string separated by canonical GO statements.
     /// </summary>
-    internal static class SqlSplitter
+    /// <param name="script">The script to split.</param>
+    /// <returns>SQL scripts separated by GO's.</returns>
+    public static IEnumerable<string> SplitSqlScript(string script)
     {
-        private static readonly Regex GoRegex = new(@"^\s*GO\s*$", RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        if (string.IsNullOrEmpty(script))
+            yield break;
 
-        /// <summary>
-        /// Returns a collection of the SQL scripts in a string separated by canonical GO statements.
-        /// </summary>
-        /// <param name="script">The script to split.</param>
-        /// <returns>SQL scripts separated by GO's.</returns>
-        public static IEnumerable<string> SplitSqlScript(string script)
+        var gos = GoRegex().Matches(script);
+        if (gos.Count == 0)
         {
-            if (string.IsNullOrEmpty(script))
-                yield break;
+            yield return script;
+            yield break;
+        }
 
-            var gos = GoRegex.Matches(script);
-            if (gos.Count == 0)
+        var ignored = new List<Run>();
+
+        bool inString = false;
+        bool inBlockComment = false;
+        bool inInlineComment = false;
+
+        int runStart = 0;
+
+        for (int i = 0; i < script.Length; i++)
+        {
+            if (inString)
             {
-                yield return script;
-                yield break;
-            }
-
-            var ignored = new List<Run>();
-
-            bool inString = false;
-            bool inBlockComment = false;
-            bool inInlineComment = false;
-
-            int runStart = 0;
-
-            for (int i = 0; i < script.Length; i++)
-            {
-                if (inString)
+                if (script[i] == '\'')
                 {
-                    if (script[i] == '\'')
-                    {
-                        if (i < script.Length - 1 && script[i + 1] == '\'')
-                            i++;
-                        else
-                        {
-                            inString = false;
-                            ignored.Add(new Run { Index = runStart, Length = i - runStart + 1 });
-                        }
-                    }
-                }
-                else if (inBlockComment)
-                {
-                    if (script[i] == '*' && (i >= script.Length - 1 || script[i + 1] == '/'))
-                    {
+                    if (i < script.Length - 1 && script[i + 1] == '\'')
                         i++;
-                        inBlockComment = false;
-                        ignored.Add(new Run { Index = runStart, Length = i - runStart + 2 });
-                    }
-                }
-                else if (inInlineComment)
-                {
-                    if (script[i] == '\n')
+                    else
                     {
-                        inInlineComment = false;
+                        inString = false;
                         ignored.Add(new Run { Index = runStart, Length = i - runStart + 1 });
                     }
                 }
-                else if (script[i] == '\'')
-                {
-                    inString = true;
-                    runStart = i;
-                }
-                else if (script[i] == '/' && i < script.Length - 1 && script[i + 1] == '*')
-                {
-                    inBlockComment = true;
-                    runStart = i;
-                    i++;
-                }
-                else if (script[i] == '-' && i < script.Length - 1 && script[i + 1] == '-')
-                {
-                    inInlineComment = true;
-                    runStart = i;
-                    i++;
-                }
             }
-
-            int startPos = 0;
-
-            foreach (Match go in gos.Cast<Match>())
+            else if (inBlockComment)
             {
-                if (IsInAnyRun(ignored, go.Index))
-                    continue;
-
-                yield return script[startPos..go.Index];
-
-                startPos = go.Index + go.Length;
+                if (script[i] == '*' && (i >= script.Length - 1 || script[i + 1] == '/'))
+                {
+                    i++;
+                    inBlockComment = false;
+                    ignored.Add(new Run { Index = runStart, Length = i - runStart + 2 });
+                }
             }
-
-            if (startPos < script.Length)
-                yield return script[startPos..];
-        }
-
-        private static bool IsInAnyRun(List<Run> runs, int index)
-        {
-            foreach (var run in runs)
+            else if (inInlineComment)
             {
-                if (index >= run.Index && index < run.Index + run.Length)
-                    return true;
+                if (script[i] == '\n')
+                {
+                    inInlineComment = false;
+                    ignored.Add(new Run { Index = runStart, Length = i - runStart + 1 });
+                }
             }
-
-            return false;
+            else if (script[i] == '\'')
+            {
+                inString = true;
+                runStart = i;
+            }
+            else if (script[i] == '/' && i < script.Length - 1 && script[i + 1] == '*')
+            {
+                inBlockComment = true;
+                runStart = i;
+                i++;
+            }
+            else if (script[i] == '-' && i < script.Length - 1 && script[i + 1] == '-')
+            {
+                inInlineComment = true;
+                runStart = i;
+                i++;
+            }
         }
 
-        private struct Run
+        int startPos = 0;
+
+        foreach (Match go in gos.Cast<Match>())
         {
-            public int Index;
-            public int Length;
+            if (IsInAnyRun(ignored, go.Index))
+                continue;
+
+            yield return script[startPos..go.Index];
+
+            startPos = go.Index + go.Length;
         }
+
+        if (startPos < script.Length)
+            yield return script[startPos..];
     }
+
+    private static bool IsInAnyRun(List<Run> runs, int index)
+    {
+        foreach (var run in runs)
+        {
+            if (index >= run.Index && index < run.Index + run.Length)
+                return true;
+        }
+
+        return false;
+    }
+
+    private struct Run
+    {
+        public int Index;
+        public int Length;
+    }
+
+    [GeneratedRegex(@"^\s*GO\s*$", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex GoRegex();
 }
